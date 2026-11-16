@@ -461,6 +461,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     /* ---------- Weekly attendance helpers (week = Saturday to Thursday) ---------- */
     const DAY_KEYS = ['sat', 'sun', 'mon', 'tue', 'wed', 'thu'];
+    const STAFF_DAY_KEYS = DAY_KEYS.concat('fri'); // staff also work Friday; students keep Sat-Thu
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, 12);
     const weekStartOf = d => addDays(d, -((d.getDay() + 1) % 7));
@@ -532,6 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (collectedPassword.value === COLLECTED_PASSWORD) {
             collectedLock.style.display = 'none';
             collectedContent.style.display = '';
+            renderReports(); // the chart needs the page visible to size itself
             collectedPassword.value = '';
             collectedError.style.display = 'none';
         } else {
@@ -542,6 +544,42 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('lockCollectedBtn').addEventListener('click', lockCollected);
+
+    /* ---------- Password prompt (same password as the Total Collected lock) ---------- */
+    const passwordModal = document.getElementById('passwordModal');
+    const pwForm = document.getElementById('pwForm');
+    const pwInput = document.getElementById('pwInput');
+    const pwError = document.getElementById('pwError');
+    let pwResolve = null;
+
+    function askPassword(title, text) {
+        document.getElementById('pwTitle').textContent = title;
+        document.getElementById('pwText').textContent = text;
+        pwInput.value = '';
+        pwError.style.display = 'none';
+        passwordModal.style.display = 'flex';
+        pwInput.focus();
+        return new Promise(resolve => { pwResolve = resolve; });
+    }
+
+    function closePasswordModal(ok) {
+        passwordModal.style.display = 'none';
+        pwInput.value = '';
+        if (pwResolve) { pwResolve(ok); pwResolve = null; }
+    }
+
+    pwForm.addEventListener('submit', e => {
+        e.preventDefault();
+        if (pwInput.value === COLLECTED_PASSWORD) {
+            closePasswordModal(true);
+        } else {
+            pwError.style.display = 'block';
+            pwInput.value = '';
+            pwInput.focus();
+        }
+    });
+    document.getElementById('pwClose').addEventListener('click', () => closePasswordModal(false));
+    passwordModal.addEventListener('click', e => { if (e.target === passwordModal) closePasswordModal(false); });
 
     // Every month that has payments, newest first, with how many payments and how much was collected
     function renderCollectedMonths() {
@@ -633,6 +671,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Set when the payment form was opened from a student's Fees check
     let pendingFeeStudentId = null;
+    let editingPaymentId = null; // set while the payment form is editing an existing payment
 
     function resetPaymentForm() {
         paymentForm.reset();
@@ -640,6 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
         otherCategoryWrapper.style.display = 'none';
         otherCategoryText.removeAttribute('required');
         pendingFeeStudentId = null;
+        editingPaymentId = null;
         paymentModalTitle.textContent = 'Add New Payment';
     }
 
@@ -774,7 +814,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let n = 0;
         Object.entries(staff.weeks || {}).forEach(([wk, rec]) => {
             const start = new Date(wk + 'T12:00:00');
-            DAY_KEYS.forEach((k, i) => {
+            STAFF_DAY_KEYS.forEach((k, i) => {
                 if (rec.attendance && rec.attendance[k]) {
                     const d = addDays(start, i);
                     if (d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth()) n++;
@@ -785,13 +825,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderStaffWeekHeader() {
-        const end = addDays(staffViewWeekStart, 5);
+        const end = addDays(staffViewWeekStart, 6);
         const isCurrent = staffWeekKey() === isoDate(currentWeekStart());
         document.getElementById('staffWeekLabel').innerHTML =
             '<strong>' + fmtShort(staffViewWeekStart) + ' - ' + fmtShort(end) + ' ' + end.getFullYear() + '</strong>' +
             (isCurrent ? ' <span class="method-badge">This week</span>' : '');
         document.getElementById('staffNextWeekBtn').disabled = isCurrent;
-        DAY_KEYS.forEach((k, i) => {
+        STAFF_DAY_KEYS.forEach((k, i) => {
             const th = document.getElementById('staffDayHead_' + k);
             if (th) th.innerHTML = k.toUpperCase() + '<small>' + fmtShort(addDays(staffViewWeekStart, i)) + '</small>';
         });
@@ -871,7 +911,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (staffList.length === 0) {
             staffAttendanceTableBody.innerHTML = `
                 <tr>
-                    <td colspan="10" style="text-align:center;">
+                    <td colspan="11" style="text-align:center;">
                         No staff members added yet.
                     </td>
                 </tr>
@@ -880,7 +920,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const monthRef = addDays(staffViewWeekStart, 5);
+        const monthRef = addDays(staffViewWeekStart, 6);
 
         staffList.forEach(staff => {
 
@@ -888,7 +928,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             let weeklyTotal = 0;
 
-            DAY_KEYS.forEach(day => {
+            STAFF_DAY_KEYS.forEach(day => {
                 if (rec.attendance[day]) {
                     weeklyTotal++;
                 }
@@ -901,7 +941,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <strong>${escapeHtml(staff.name)}</strong>
                 </td>
 
-                ${DAY_KEYS.map(day => {
+                ${STAFF_DAY_KEYS.map(day => {
                     const t = rec.timings[day] || { arr: '', dep: '' };
                     return `
                     <td class="staff-day-cell">
@@ -1586,6 +1626,20 @@ document.addEventListener('DOMContentLoaded', () => {
             date: paymentDateInput.value
         };
 
+        // editing an existing payment: update it in place, keep its id
+        if (editingPaymentId !== null) {
+            const target = payments.find(x => x.id === editingPaymentId);
+            if (target) {
+                const { id: _keepId, ...fields } = newPayment;
+                Object.assign(target, fields);
+                applyPaymentToFees(target);
+                saveAndRender();
+                toggleModal(false);
+                openStudentHistory(studentKey(target));
+                return;
+            }
+        }
+
         payments.unshift(newPayment);
 
         // payment opened from a student's Fees check: tick it now that the payment is saved
@@ -1599,6 +1653,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         lastAddedPayment = newPayment;
+        applyPaymentToFees(newPayment);
 
         saveAndRender();
 
@@ -1676,9 +1731,52 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    window.deletePayment = function(id) {
+    // A fully paid payment (balance due 0) ticks Fees for the attendance student with the same
+    // name + phone. If an edit makes the balance positive again, the tick that payment made is removed.
+    function applyPaymentToFees(p) {
+        let changed = false;
+        studentAttendanceList.forEach(st => {
+            if (studentKey({ name: st.name, phone: st.mobile }) !== studentKey(p)) return;
+            if (!(p.balanceDue > 0) && p.amount > 0) {
+                if (!st.feesPaid || st.feePaymentId !== p.id) { st.feesPaid = true; st.feePaymentId = p.id; changed = true; }
+            } else if (st.feePaymentId === p.id) {
+                st.feesPaid = false; delete st.feePaymentId; changed = true;
+            }
+        });
+        if (changed) saveStored(STORAGE_KEYS.students, studentAttendanceList);
+    }
+
+    window.editPayment = function(id) {
+        const p = payments.find(x => x.id === id);
+        if (!p) return;
+        resetPaymentForm();
+        refreshAddedByList();
+        editingPaymentId = id;
+        paymentModalTitle.textContent = 'Edit Payment - ' + p.name;
+        studentNameInput.value = p.name;
+        studentPhoneInput.value = p.phone || '';
+        if ([...categorySelect.options].some(o => o.value === p.category)) {
+            categorySelect.value = p.category;
+        } else {
+            categorySelect.value = 'Other';
+            otherCategoryWrapper.style.display = 'flex';
+            otherCategoryText.setAttribute('required', 'true');
+            otherCategoryText.value = p.category;
+        }
+        amountPaidInput.value = p.amount;
+        balanceDueInput.value = p.balanceDue || '';
+        paymentNoteInput.value = p.note === '-' ? '' : (p.note || '');
+        paymentMethodSelect.value = p.method || 'Cash';
+        addedByInput.value = p.addedBy || '';
+        paymentDateInput.value = p.date || todayIso();
+        studentHistoryModal.style.display = 'none'; // so the edit form is not hidden behind it
+        toggleModal(true);
+    };
+
+    window.deletePayment = async function(id) {
 
         if (
+            await askPassword('Delete payment', 'Enter the password to delete this payment.') &&
             confirm(
                 'Are you sure you want to delete this payment record?'
             )
@@ -1716,6 +1814,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         renderDashboard();
 
+        renderBalanceDue();
+
         filterStudents();
 
         filterPayments();
@@ -1731,6 +1831,32 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCollectedMonths();
 
         populateExportDropdowns();
+    }
+
+    // Dashboard: who still owes money (latest payment of each student). The list opens on click.
+    const balanceDueToggle = document.getElementById('balanceDueToggle');
+    const balanceDuePanel = document.getElementById('balanceDuePanel');
+
+    balanceDueToggle.addEventListener('click', () => {
+        const open = balanceDuePanel.hidden;
+        balanceDuePanel.hidden = !open;
+        balanceDueToggle.setAttribute('aria-expanded', String(open));
+        balanceDueToggle.classList.toggle('open', open);
+    });
+
+    function renderBalanceDue() {
+        const due = groupPayments(payments)
+            .filter(g => (g.latest.balanceDue || 0) > 0)
+            .sort((a, b) => b.latest.balanceDue - a.latest.balanceDue);
+        document.getElementById('balanceDueCount').textContent = due.length;
+        document.getElementById('balanceDueList').innerHTML = due.length
+            ? due.map(g => `<tr>
+                <td><strong class="student-link" data-student-key="${escapeHtml(g.key)}" title="See all payments of this student">${escapeHtml(g.name)}</strong></td>
+                <td>${escapeHtml(g.phone || '-')}</td>
+                <td>${escapeHtml(g.latest.category)}</td>
+                <td class="balance-due">EGP ${g.latest.balanceDue.toLocaleString()}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="4" style="text-align:center;">Nobody has a balance due.</td></tr>';
     }
 
     // Groups payments into one entry per student (same name + same phone), newest student first
@@ -3160,6 +3286,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let uid = Date.now();
         let nPay = 0, nNew = 0, nUpd = 0;
+        let importedFresh = [];
 
         if (doFees) {
             const fallbackDate = importPayDate.value || isoDate(new Date());
@@ -3189,6 +3316,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             });
             nPay = fresh.length;
+            importedFresh = fresh;
             // newest payment date first, so "Recent Payments" shows the latest dates
             payments = [...fresh, ...payments].sort(byDateDesc);
         }
@@ -3212,6 +3340,7 @@ document.addEventListener('DOMContentLoaded', () => {
             saveStored(STORAGE_KEYS.students, studentAttendanceList);
         }
 
+        importedFresh.forEach(applyPaymentToFees);
         saveAndRender();
 
         importPreviewModal.style.display = 'none';
@@ -3259,8 +3388,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td><span class="method-badge">${escapeHtml(p.method || '-')}</span></td>
                 <td>${escapeHtml(p.addedBy || '-')}</td>
                 <td>${escapeHtml(p.note || '-')}</td>
-                <td>
-                    <button class="btn" title="Delete this payment" onclick="deletePayment(${p.id})">
+                <td class="row-actions">
+                    <button class="btn edit-btn" title="Edit this payment" onclick="editPayment(${p.id})">
+                        <i class="fa-solid fa-pen"></i>
+                    </button>
+                    <button class="btn delete-btn" title="Delete this payment (password)" onclick="deletePayment(${p.id})">
                         <i class="fa-solid fa-trash"></i>
                     </button>
                 </td>
@@ -3291,8 +3423,9 @@ document.addEventListener('DOMContentLoaded', () => {
     /* ---------- Clear data (per section) ---------- */
     const BACKUP_HINT = '\n\nThis cannot be undone. Tip: download a backup first (Reports & Exports page).';
 
-    document.getElementById('clearPaymentsBtn').addEventListener('click', () => {
+    document.getElementById('clearPaymentsBtn').addEventListener('click', async () => {
         if (payments.length === 0) { alert('There are no payments to clear.'); return; }
+        if (!await askPassword('Clear all payments', 'Enter the password to delete ALL payments.')) return;
         if (!confirm('Delete ALL ' + payments.length + ' payment records?\n\nThe Dashboard, Students directory and Reports are built from payments, so they will go back to 0 too.' + BACKUP_HINT)) return;
         payments = [];
         lastAddedPayment = null;

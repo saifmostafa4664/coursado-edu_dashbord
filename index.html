@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Coursado Dashboard v1.3</title>
+    <title>Coursado Dashboard v1.4</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -158,22 +158,30 @@
                     </div>
                 </div>
 
-                <div class="metric-card">
+                <button type="button" id="balanceDueToggle" class="metric-card metric-clickable" aria-expanded="false" aria-controls="balanceDuePanel">
                     <div>
-                        <span class="metric-title">
-                            THIS MONTH
-                        </span>
-
-                        <h2 id="thisMonthCollected">
-                            EGP 0
-                        </h2>
+                        <span class="metric-title">LATEST BALANCE DUE</span>
+                        <h2><span id="balanceDueCount">0</span> <small>students</small></h2>
+                        <span class="metric-hint">Click to see who <i class="fa-solid fa-chevron-down"></i></span>
                     </div>
-
                     <div class="metric-icon teal">
-                        <i class="fa-solid fa-calendar-days"></i>
+                        <i class="fa-solid fa-hand-holding-dollar"></i>
                     </div>
-                </div>
+                </button>
 
+            </section>
+
+            <section id="balanceDuePanel" class="panel balance-panel" hidden>
+                <div class="panel-header">
+                    <h2>Students with Balance Due</h2>
+                    <span class="export-description">Based on each student's latest payment</span>
+                </div>
+                <div class="table-responsive">
+                    <table>
+                        <thead><tr><th>STUDENT</th><th>PHONE</th><th>PAID FOR</th><th>BALANCE DUE</th></tr></thead>
+                        <tbody id="balanceDueList"></tbody>
+                    </table>
+                </div>
             </section>
 
             <div class="content-grid">
@@ -430,56 +438,115 @@
              class="view-section"
              style="display: none;">
 
-            <section class="panel" style="max-width:700px;">
+            <section id="collectedLock" class="panel lock-panel">
+                <h2><i class="fa-solid fa-lock"></i> Total Collected is locked</h2>
+                <p class="export-description">Enter the password to see the money figures, charts and summaries.</p>
+                <form id="collectedForm" style="margin-top:15px;">
+                    <div class="input-group">
+                        <label for="collectedPassword">Password</label>
+                        <input type="password" id="collectedPassword" autocomplete="off" required>
+                        <small id="collectedError" style="display:none;color:#dc2626;margin-top:.4rem;">Wrong password. Try again.</small>
+                    </div>
+                    <button type="submit" class="btn primary-btn submit-btn">
+                        <i class="fa-solid fa-lock-open"></i>
+                        Unlock
+                    </button>
+                </form>
+            </section>
 
-                <div id="collectedLock" style="max-width:420px;">
-                    <h2><i class="fa-solid fa-lock"></i> Total Collected is locked</h2>
-                    <p class="export-description">Enter the password to see the total amount collected.</p>
+            <div id="collectedContent" style="display:none;">
 
-                    <form id="collectedForm" style="margin-top:15px;">
-                        <div class="input-group">
-                            <label for="collectedPassword">Password</label>
-                            <input type="password" id="collectedPassword" autocomplete="off" required>
-                            <small id="collectedError" style="display:none;color:#dc2626;margin-top:.4rem;">Wrong password. Try again.</small>
-                        </div>
-                        <button type="submit" class="btn primary-btn submit-btn">
-                            <i class="fa-solid fa-lock-open"></i>
-                            Unlock
-                        </button>
-                    </form>
-                </div>
-
-                <div id="collectedContent" style="display:none;">
-                    <div class="metric-card" style="margin-bottom:15px;">
+                <section class="metrics-grid two">
+                    <div class="metric-card">
                         <div>
                             <span class="metric-title">TOTAL COLLECTED</span>
                             <h2 id="totalCollected">EGP 0</h2>
                         </div>
-                        <div class="metric-icon green">
-                            <i class="fa-solid fa-wallet"></i>
-                        </div>
+                        <div class="metric-icon green"><i class="fa-solid fa-wallet"></i></div>
                     </div>
-                    <h3 style="margin:20px 0 8px;font-size:15px;">Collected by month</h3>
+                    <div class="metric-card">
+                        <div>
+                            <span class="metric-title">THIS MONTH</span>
+                            <h2 id="thisMonthCollected">EGP 0</h2>
+                        </div>
+                        <div class="metric-icon teal"><i class="fa-solid fa-calendar-days"></i></div>
+                    </div>
+                </section>
+
+            <div class="reports-grid">
+
+                <section class="panel">
+
+                    <h2>
+                        Financial Summary
+                    </h2>
+
+                    <div class="report-stats">
+
+                        <div class="report-stat-item">
+                            <span>Total Lifetime Revenue:</span>
+                            <strong id="reportTotalRevenue" style="color: #059669;">EGP 0</strong>
+                        </div>
+
+                        <div class="report-stat-item">
+                            <span>Total Transactions:</span>
+                            <strong id="reportTotalCount">0</strong>
+                        </div>
+
+                        <div class="report-stat-item">
+                            <span>Unique Active Students:</span>
+                            <strong id="reportUniqueStudents">0</strong>
+                        </div>
+
+                    </div>
+
+                </section>
+
+                <section class="panel">
+
+                    <h2>
+                        Category Breakdown
+                    </h2>
+
+                    <div id="categoryBreakdownContainer"
+                         class="breakdown-list">
+
+                        <p class="empty-activity">
+                            No data available for breakdown.
+                        </p>
+
+                    </div>
+
+                </section>
+
+            </div>
+
+
+                <section class="panel" style="margin-bottom:1.5rem;">
+                    <h2>Monthly Revenue Chart</h2>
+                    <div class="chart-container">
+                        <canvas id="monthlyChart"></canvas>
+                    </div>
+                </section>
+
+                <section class="panel" style="margin-bottom:1.5rem;">
+                    <h2>Collected by month</h2>
                     <div class="table-responsive">
                         <table>
                             <thead>
-                                <tr>
-                                    <th>MONTH</th>
-                                    <th>PAYMENTS</th>
-                                    <th>COLLECTED</th>
-                                </tr>
+                                <tr><th>MONTH</th><th>PAYMENTS</th><th>COLLECTED</th></tr>
                             </thead>
                             <tbody id="collectedMonthsBody"></tbody>
                         </table>
                     </div>
-                    <p class="export-description" style="margin-top:12px;">It locks again as soon as you leave this page.</p>
-                    <button id="lockCollectedBtn" class="btn" type="button" style="margin-top:12px;">
-                        <i class="fa-solid fa-lock"></i>
-                        Lock now
-                    </button>
-                </div>
+                </section>
 
-            </section>
+                <p class="export-description">It locks again as soon as you leave this page.</p>
+                <button id="lockCollectedBtn" class="btn" type="button" style="margin-top:12px;">
+                    <i class="fa-solid fa-lock"></i>
+                    Lock now
+                </button>
+            </div>
 
         </div>
 
@@ -631,6 +698,7 @@
                                 <th id="staffDayHead_tue">TUE</th>
                                 <th id="staffDayHead_wed">WED</th>
                                 <th id="staffDayHead_thu">THU</th>
+                                <th id="staffDayHead_fri">FRI</th>
                                 <th>WEEKLY TOTAL</th>
                                 <th id="staffMonthHead">MONTHLY TOTAL</th>
                                 <th>ACTION</th>
@@ -740,62 +808,7 @@
                 </div>
             </div>
 
-            <div class="reports-grid">
-
-                <section class="panel">
-
-                    <h2>
-                        Financial Summary
-                    </h2>
-
-                    <div class="report-stats">
-
-                        <div class="report-stat-item">
-                            <span>Total Lifetime Revenue:</span>
-                            <strong id="reportTotalRevenue" style="color: #059669;">EGP 0</strong>
-                        </div>
-
-                        <div class="report-stat-item">
-                            <span>Total Transactions:</span>
-                            <strong id="reportTotalCount">0</strong>
-                        </div>
-
-                        <div class="report-stat-item">
-                            <span>Unique Active Students:</span>
-                            <strong id="reportUniqueStudents">0</strong>
-                        </div>
-
-                    </div>
-
-                </section>
-
-                <section class="panel">
-
-                    <h2>
-                        Category Breakdown
-                    </h2>
-
-                    <div id="categoryBreakdownContainer"
-                         class="breakdown-list">
-
-                        <p class="empty-activity">
-                            No data available for breakdown.
-                        </p>
-
-                    </div>
-
-                </section>
-
-            </div>
-
-            <div class="content-grid" style="margin-top: 1.5rem;">
-
-                <section class="panel">
-                    <h2>Monthly Revenue Chart</h2>
-                    <div class="chart-container">
-                        <canvas id="monthlyChart"></canvas>
-                    </div>
-                </section>
+            <div class="content-grid single">
 
                 <section class="panel">
 
@@ -1105,6 +1118,24 @@
         <button id="downloadReceiptBtn" class="btn primary-btn" style="width: 100%; justify-content: center;">
             <i class="fa-solid fa-download"></i> Download Receipt as Image
         </button>
+    </div>
+</div>
+
+<div id="passwordModal" class="modal">
+    <div class="modal-content" style="max-width: 380px;">
+        <div class="modal-header">
+            <h2 id="pwTitle">Password required</h2>
+            <span id="pwClose" class="close-btn">&times;</span>
+        </div>
+        <form id="pwForm">
+            <p id="pwText" class="export-description"></p>
+            <div class="input-group" style="margin-top:12px;">
+                <label for="pwInput">Password</label>
+                <input type="password" id="pwInput" autocomplete="off" required>
+                <small id="pwError" style="display:none;color:#dc2626;margin-top:.4rem;">Wrong password. Try again.</small>
+            </div>
+            <button type="submit" class="btn primary-btn submit-btn">Confirm</button>
+        </form>
     </div>
 </div>
 
