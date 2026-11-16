@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Coursado Dashboard v1.3</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 
     <link rel="stylesheet"
@@ -19,11 +22,13 @@
 
 <body>
 
+
 <section id="loginScreen" class="login-screen">
     <form id="loginForm" class="login-card">
         <div class="login-brand">
             <i class="fa-solid fa-graduation-cap"></i>
             <h1>COURSADO</h1>
+            <span class="login-slogan">Let us shape little minds</span>
             <p>Admin sign in</p>
         </div>
         <label for="loginEmail">Admin email</label>
@@ -66,6 +71,11 @@
                 <a href="#" class="nav-item" data-view="payments">
                     <i class="fa-solid fa-wallet"></i>
                     <span>Payments</span>
+                </a>
+
+                <a href="#" class="nav-item" data-view="collected">
+                    <i class="fa-solid fa-lock"></i>
+                    <span>Total Collected</span>
                 </a>
 
                 <a href="#" class="nav-item" data-view="student-attendance">
@@ -151,22 +161,6 @@
                 <div class="metric-card">
                     <div>
                         <span class="metric-title">
-                            TOTAL COLLECTED
-                        </span>
-
-                        <h2 id="totalCollected">
-                            EGP 0
-                        </h2>
-                    </div>
-
-                    <div class="metric-icon green">
-                        <i class="fa-solid fa-wallet"></i>
-                    </div>
-                </div>
-
-                <div class="metric-card">
-                    <div>
-                        <span class="metric-title">
                             THIS MONTH
                         </span>
 
@@ -207,11 +201,13 @@
                             <thead>
                                 <tr>
                                     <th>STUDENT</th>
-                                    <th>DATE</th>
-                                    <th>AMOUNT</th>
+                                    <th>PHONE</th>
+                                    <th>LAST PAYMENT</th>
+                                    <th>TOTAL PAID</th>
                                     <th>BALANCE DUE</th>
                                     <th>PAID FOR</th>
                                     <th>METHOD</th>
+                                    <th>ADDED BY</th>
                                     <th>NOTE</th>
                                     <th>ACTION</th>
                                 </tr>
@@ -301,7 +297,7 @@
                             <input
                                 type="text"
                                 id="studentSearchInput"
-                                placeholder="Search by name or balance (e.g. 500, >0)..."
+                                placeholder="Search by name, phone or balance (e.g. 500, >0)..."
                                 class="search-box"
                             >
 
@@ -323,11 +319,14 @@
 
                             <option value="all">All Categories</option>
                             <option value="Juniors">Juniors</option>
+                            <option value="Toddlers">Toddlers</option>
                             <option value="Kiddos">Kiddos</option>
                             <option value="Beginners">Beginners</option>
                             <option value="Movers">Movers</option>
                             <option value="Flyers">Flyers</option>
                             <option value="Supers">Supers</option>
+                            <option value="Speaking">Speaking</option>
+                            <option value="Adults">Adults</option>
                             <option value="Drama">Drama</option>
                             <option value="Robotics">Robotics</option>
                             <option value="Programming">Programming</option>
@@ -347,6 +346,7 @@
                         <thead>
                             <tr>
                                 <th>STUDENT NAME</th>
+                                <th>PHONE</th>
                                 <th>TOTAL PAYMENTS MADE</th>
                                 <th>TOTAL PAID (EGP)</th>
                                 <th>LATEST BALANCE DUE</th>
@@ -380,7 +380,7 @@
                     <input
                         type="text"
                         id="paymentSearchInput"
-                        placeholder="Search name, date, or balance (e.g. 500, >0)..."
+                        placeholder="Search name, phone, date, or balance (e.g. 500, >0)..."
                         class="search-box"
                         style="min-width:260px;"
                     >
@@ -404,11 +404,13 @@
                         <thead>
                             <tr>
                                 <th>STUDENT</th>
-                                <th>DATE</th>
-                                <th>AMOUNT</th>
+                                <th>PHONE</th>
+                                <th>LAST PAYMENT</th>
+                                <th>TOTAL PAID</th>
                                 <th>BALANCE DUE</th>
                                 <th>PAID FOR</th>
                                 <th>METHOD</th>
+                                <th>ADDED BY</th>
                                 <th>NOTE</th>
                                 <th>ACTION</th>
                             </tr>
@@ -424,6 +426,63 @@
 
         </div>
 
+        <div id="collectedView"
+             class="view-section"
+             style="display: none;">
+
+            <section class="panel" style="max-width:700px;">
+
+                <div id="collectedLock" style="max-width:420px;">
+                    <h2><i class="fa-solid fa-lock"></i> Total Collected is locked</h2>
+                    <p class="export-description">Enter the password to see the total amount collected.</p>
+
+                    <form id="collectedForm" style="margin-top:15px;">
+                        <div class="input-group">
+                            <label for="collectedPassword">Password</label>
+                            <input type="password" id="collectedPassword" autocomplete="off" required>
+                            <small id="collectedError" style="display:none;color:#dc2626;margin-top:.4rem;">Wrong password. Try again.</small>
+                        </div>
+                        <button type="submit" class="btn primary-btn submit-btn">
+                            <i class="fa-solid fa-lock-open"></i>
+                            Unlock
+                        </button>
+                    </form>
+                </div>
+
+                <div id="collectedContent" style="display:none;">
+                    <div class="metric-card" style="margin-bottom:15px;">
+                        <div>
+                            <span class="metric-title">TOTAL COLLECTED</span>
+                            <h2 id="totalCollected">EGP 0</h2>
+                        </div>
+                        <div class="metric-icon green">
+                            <i class="fa-solid fa-wallet"></i>
+                        </div>
+                    </div>
+                    <h3 style="margin:20px 0 8px;font-size:15px;">Collected by month</h3>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>MONTH</th>
+                                    <th>PAYMENTS</th>
+                                    <th>COLLECTED</th>
+                                </tr>
+                            </thead>
+                            <tbody id="collectedMonthsBody"></tbody>
+                        </table>
+                    </div>
+                    <p class="export-description" style="margin-top:12px;">It locks again as soon as you leave this page.</p>
+                    <button id="lockCollectedBtn" class="btn" type="button" style="margin-top:12px;">
+                        <i class="fa-solid fa-lock"></i>
+                        Lock now
+                    </button>
+                </div>
+
+            </section>
+
+        </div>
+
         <div id="student-attendanceView"
              class="view-section"
              style="display: none;">
@@ -432,7 +491,6 @@
                 <div class="panel-header">
                     <div>
                         <h2>Student Attendance</h2>
-                        
                     </div>
                     <div style="display:flex;gap:10px;flex-wrap:wrap;">
                         <button id="clearStudentWeekBtn" class="btn danger-btn" type="button">
@@ -450,60 +508,56 @@
                     </div>
                 </div>
 
-                <div class="student-search-controls attendance-filters">
+                <div id="attBreadcrumb" class="breadcrumb"></div>
+
+                <div id="attCards" class="books-grid"></div>
+
+                <div id="attToolbar" class="student-search-controls attendance-filters" style="display:none;">
                     <div class="student-search-wrapper">
                         <i class="fa-solid fa-magnifying-glass"></i>
-                        <input type="text" id="attendanceStudentSearch" placeholder="Search student name or mobile..." class="search-box">
+                        <input type="text" id="attendanceStudentSearch" placeholder="Search name, mobile or group..." class="search-box">
                     </div>
-
-                    <select id="attendanceCategoryFilter" class="category-filter">
-                        <option value="all">All Categories</option>
-                        <option value="Beginners">Beginners</option>
-                        <option value="Flyers">Flyers</option>
-                        <option value="Movers">Movers</option>
-                        <option value="Juniors">Juniors</option>
-                        <option value="Kiddos">Kiddos</option>
-                        <option value="Supers">Supers</option>
-                        <option value="Drama">Drama</option>
-                        <option value="Robotics">Robotics</option>
-                        <option value="Programming">Programming</option>
-                    </select>
 
                     <select id="attendanceGroupFilter" class="category-filter">
                         <option value="all">All Groups</option>
                     </select>
                 </div>
 
-                <div class="week-nav">
-                    <button id="prevWeekBtn" class="btn" type="button"><i class="fa-solid fa-chevron-left"></i> Previous Week</button>
-                    <div class="week-nav-center">
-                        <span id="weekLabel" class="week-label"></span>
-                        <button id="currentWeekBtn" class="btn" type="button">This Week</button>
+                <div id="attTableArea" style="display:none;">
+                    <div class="week-nav">
+                        <button id="prevWeekBtn" class="btn" type="button"><i class="fa-solid fa-chevron-left"></i> Previous Week</button>
+                        <div class="week-nav-center">
+                            <span id="weekLabel" class="week-label"></span>
+                            <button id="currentWeekBtn" class="btn" type="button">This Week</button>
+                        </div>
+                        <button id="nextWeekBtn" class="btn" type="button">Next Week <i class="fa-solid fa-chevron-right"></i></button>
                     </div>
-                    <button id="nextWeekBtn" class="btn" type="button">Next Week <i class="fa-solid fa-chevron-right"></i></button>
-                </div>
 
-                <div class="table-responsive">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>STUDENT</th>
-                                <th>MOBILE</th>
-                                <th>CATEGORY</th>
-                                <th>GROUP</th>
-                                <th id="dayHead_sat">SAT</th>
-                                <th id="dayHead_sun">SUN</th>
-                                <th id="dayHead_mon">MON</th>
-                                <th id="dayHead_tue">TUE</th>
-                                <th id="dayHead_wed">WED</th>
-                                <th id="dayHead_thu">THU</th>
-                                <th>COURSE TIME</th>
-                                <th>BOOK</th>
-                                <th>ACTION</th>
-                            </tr>
-                        </thead>
-                        <tbody id="studentAttendanceTableBody"></tbody>
-                    </table>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>STUDENT</th>
+                                    <th>MOBILE</th>
+                                    <th>LEVEL</th>
+                                    <th>GROUP</th>
+                                    <th id="dayHead_sat">SAT</th>
+                                    <th id="dayHead_sun">SUN</th>
+                                    <th id="dayHead_mon">MON</th>
+                                    <th id="dayHead_tue">TUE</th>
+                                    <th id="dayHead_wed">WED</th>
+                                    <th id="dayHead_thu">THU</th>
+                                    <th>COURSE TIME</th>
+                                    <th>BOOK</th>
+                                    <th>MID EXAM</th>
+                                    <th>FINAL EXAM</th>
+                                    <th>FEES</th>
+                                    <th>ACTION</th>
+                                </tr>
+                            </thead>
+                            <tbody id="studentAttendanceTableBody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </section>
 
@@ -517,7 +571,6 @@
                 <div class="panel-header">
                     <div>
                         <h2>Books Inventory</h2>
-                        
                     </div>
                     <button id="clearBooksBtn" class="btn danger-btn" type="button">
                         <i class="fa-solid fa-rotate-left"></i>
@@ -525,6 +578,7 @@
                     </button>
                 </div>
 
+                <div id="booksBreadcrumb" class="breadcrumb"></div>
                 <div id="booksGrid" class="books-grid"></div>
             </section>
 
@@ -651,6 +705,7 @@
                         <div class="import-row">
                             <b>Sheet:</b><select id="importSheetSelect"></select>
                             <b style="min-width:0">Category:</b><select id="importCategory"></select>
+                            <b style="min-width:0">Level:</b><select id="importLevel"></select>
                             <b style="min-width:0">Group:</b><input type="text" id="importGroup" placeholder="e.g. F.2B" style="width:100px;text-transform:uppercase;">
                             <b style="min-width:0">Time:</b><input type="time" id="importTime">
                         </div>
@@ -774,11 +829,14 @@
                             <select id="exportCategorySelect">
                                 <option value="all">All Categories</option>
                                 <option value="Juniors">Juniors</option>
+                            <option value="Toddlers">Toddlers</option>
                                 <option value="Kiddos">Kiddos</option>
                                 <option value="Beginners">Beginners</option>
                                 <option value="Movers">Movers</option>
                                 <option value="Flyers">Flyers</option>
                                 <option value="Supers">Supers</option>
+                            <option value="Speaking">Speaking</option>
+                            <option value="Adults">Adults</option>
                                 <option value="Drama">Drama</option>
                                 <option value="Robotics">Robotics</option>
                                 <option value="Programming">Programming</option>
@@ -809,7 +867,7 @@
     <div class="modal-content">
 
         <div class="modal-header">
-            <h2>Add New Payment</h2>
+            <h2 id="paymentModalTitle">Add New Payment</h2>
             <span id="closeModal" class="close-btn">&times;</span>
         </div>
 
@@ -821,15 +879,23 @@
             </div>
 
             <div class="input-group">
+                <label for="studentPhone">Phone Number</label>
+                <input type="tel" id="studentPhone" placeholder="Student / parent mobile number" autocomplete="off" required>
+            </div>
+
+            <div class="input-group">
                 <label for="categorySelect">Paid For / Category</label>
                 <select id="categorySelect" required>
                     <option value="" disabled selected>Select category...</option>
                     <option value="Juniors">Juniors</option>
+                            <option value="Toddlers">Toddlers</option>
                     <option value="Kiddos">Kiddos</option>
                     <option value="Beginners">Beginners</option>
                     <option value="Movers">Movers</option>
                     <option value="Flyers">Flyers</option>
                     <option value="Supers">Supers</option>
+                            <option value="Speaking">Speaking</option>
+                            <option value="Adults">Adults</option>
                     <option value="Drama">Drama</option>
                     <option value="Robotics">Robotics</option>
                     <option value="Programming">Programming</option>
@@ -867,6 +933,12 @@
             </div>
 
             <div class="input-group">
+                <label for="addedBy">Added By</label>
+                <input type="text" id="addedBy" list="addedByList" placeholder="Who received this payment?" autocomplete="off" required>
+                <datalist id="addedByList"></datalist>
+            </div>
+
+            <div class="input-group">
                 <label for="paymentDate">Date</label>
                 <input type="date" id="paymentDate" required>
             </div>
@@ -881,7 +953,35 @@
 
 </div>
 
-<!-- Student Attendance Modal -->
+<div id="studentHistoryModal" class="modal">
+    <div class="modal-content" style="max-width: 950px; max-height: 90vh; overflow: auto;">
+        <div class="modal-header">
+            <h2 id="historyTitle">Payment History</h2>
+            <span id="closeHistoryModal" class="close-btn">&times;</span>
+        </div>
+
+        <div id="historySummary" class="history-summary"></div>
+
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>DATE</th>
+                        <th>AMOUNT</th>
+                        <th>BALANCE DUE</th>
+                        <th>PAID FOR</th>
+                        <th>METHOD</th>
+                        <th>ADDED BY</th>
+                        <th>NOTE</th>
+                        <th>ACTION</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 <div id="studentAttendanceModal" class="modal">
     <div class="modal-content" style="max-width: 520px;">
         <div class="modal-header">
@@ -901,19 +1001,13 @@
             </div>
 
             <div class="input-group">
-                <label for="attendanceStudentCategory">Category</label>
-                <select id="attendanceStudentCategory" required>
-                    <option value="" disabled selected>Select category...</option>
-                    <option value="Beginners">Beginners</option>
-                    <option value="Flyers">Flyers</option>
-                    <option value="Movers">Movers</option>
-                    <option value="Juniors">Juniors</option>
-                    <option value="Kiddos">Kiddos</option>
-                    <option value="Supers">Supers</option>
-                    <option value="Drama">Drama</option>
-                    <option value="Robotics">Robotics</option>
-                    <option value="Programming">Programming</option>
-                </select>
+                <label for="attendanceStudentCategory">Category / Room</label>
+                <select id="attendanceStudentCategory" required></select>
+            </div>
+
+            <div class="input-group" id="attendanceLevelGroup" style="display:none;">
+                <label for="attendanceStudentLevel">Level</label>
+                <select id="attendanceStudentLevel"></select>
             </div>
 
             <div class="input-group">
@@ -947,7 +1041,6 @@
     </div>
 </div>
 
-<!-- Staff Modal -->
 <div id="staffModal" class="modal">
     <div class="modal-content" style="max-width: 400px;">
         <div class="modal-header">
@@ -964,7 +1057,6 @@
     </div>
 </div>
 
-<!-- Timings Edit Modal -->
 <div id="timingModal" class="modal">
     <div class="modal-content" style="max-width: 400px;">
         <div class="modal-header">
@@ -986,7 +1078,6 @@
     </div>
 </div>
 
-<!-- Receipt Popup Modal -->
 <div id="receiptModal" class="modal">
     <div class="modal-content" style="max-width: 420px; text-align: center;">
         <div class="modal-header">
@@ -1001,10 +1092,12 @@
             </div>
             <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Receipt No:</strong> <span id="recNo"></span></p>
             <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Student Name:</strong> <span id="recStudent"></span></p>
+            <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Phone:</strong> <span id="recPhone"></span></p>
             <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Paid For:</strong> <span id="recCategory"></span></p>
             <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Amount Paid:</strong> <span id="recAmount" style="color: #059669; font-weight: 600;"></span></p>
             <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Balance Due:</strong> <span id="recBalance" style="color: #ef4444; font-weight: 600;"></span></p>
             <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Payment Method:</strong> <span id="recMethod"></span></p>
+            <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Added By:</strong> <span id="recAddedBy"></span></p>
             <p style="margin-bottom: 0.5rem; font-size: 0.85rem;"><strong>Note:</strong> <span id="recNote"></span></p>
             <p style="margin-bottom: 0; font-size: 0.85rem;"><strong>Date:</strong> <span id="recDate"></span></p>
         </div>

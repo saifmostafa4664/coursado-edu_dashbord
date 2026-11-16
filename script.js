@@ -37,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function showLogin(message = '') {
         currentUserId = null;
         cloudSyncReady = false;
+        if (typeof lockCollected === 'function') lockCollected();
         appContainer.style.display = 'none';
         loginScreen.style.display = 'flex';
         setLoginMessage(message, Boolean(message));
@@ -46,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loginScreen.style.display = 'none';
         appContainer.style.display = 'flex';
     }
+
 
     const paymentModal = document.getElementById('paymentModal');
     const openModalBtn = document.getElementById('openModalBtn');
@@ -58,6 +60,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const categorySelect = document.getElementById('categorySelect');
     const otherCategoryWrapper = document.getElementById('otherCategoryWrapper');
     const otherCategoryText = document.getElementById('otherCategoryText');
+
+    const studentPhoneInput = document.getElementById('studentPhone');
+    const addedByInput = document.getElementById('addedBy');
+    const addedByList = document.getElementById('addedByList');
+    const studentHistoryModal = document.getElementById('studentHistoryModal');
+    const historyTitle = document.getElementById('historyTitle');
+    const historySummary = document.getElementById('historySummary');
+    const historyTableBody = document.getElementById('historyTableBody');
 
     const amountPaidInput = document.getElementById('amountPaid');
     const balanceDueInput = document.getElementById('balanceDue');
@@ -126,7 +136,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const attendanceTime = document.getElementById('attendanceCourseTime');
 
     const attendanceSearch = document.getElementById('attendanceStudentSearch');
-    const attendanceCategoryFilter = document.getElementById('attendanceCategoryFilter');
+    const attendanceLevel = document.getElementById('attendanceStudentLevel');
+    const attendanceLevelGroup = document.getElementById('attendanceLevelGroup');
+    const paymentModalTitle = document.getElementById('paymentModalTitle');
     const attendanceGroupFilter = document.getElementById('attendanceGroupFilter');
 
     const dayCheckboxes = document.querySelectorAll('input[name="attendanceDay"]');
@@ -139,6 +151,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const todayIso = () => isoDate(new Date());
 
     paymentDateInput.value = todayIso();
+
+    const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+
+    /* ---------- Student identity ----------
+       One student = same name + same phone number. The same name with a different phone number
+       is a different student, so it starts its own payment history. */
+    const phoneKey = v => toAsciiDigits(v == null ? '' : v).replace(/\D/g, '');
+    const studentKey = p => String(p.name || '').toLowerCase().replace(/\s+/g, ' ').trim() + '|' + phoneKey(p.phone);
 
     /* ---------- Persistence ---------- */
     const STORAGE_KEYS = {
@@ -197,6 +217,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 350);
     }
 
+    let lastMigrationChanged = false;
+
     function writeLocalPayload(payload) {
         payments = Array.isArray(payload.payments) ? payload.payments : [];
         staffList = Array.isArray(payload.staff) ? payload.staff : [];
@@ -204,9 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
         booksStock = payload.books && typeof payload.books === 'object' && !Array.isArray(payload.books)
             ? payload.books
             : {};
-        BOOK_STAGES.forEach(stage => {
-            booksStock[stage] = Math.max(0, parseInt(booksStock[stage], 10) || 0);
-        });
+        lastMigrationChanged = normalizeLoadedData();
 
         Object.entries({
             [STORAGE_KEYS.payments]: payments,
@@ -232,8 +252,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (error) throw error;
 
         currentUserId = userId;
+        let dataMigrated = false;
         if (data) {
             writeLocalPayload(data.payload || {});
+            dataMigrated = lastMigrationChanged;
         } else {
             const importLocalData = browserHasData() && confirm(
                 'No cloud data exists for this admin yet. Upload the data currently saved in this browser to Supabase? Choose Cancel to keep the browser data unchanged and sign in later.'
@@ -246,6 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         cloudSyncReady = true;
+        if (data && dataMigrated) scheduleCloudSave();
         if (!data && !await persistCloudData()) {
             throw new Error('Initial data could not be saved to Supabase. Check the table and RLS setup.');
         }
@@ -298,6 +321,57 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+
+
+    // Same clean-ups the app does at startup, re-run on data that arrives from the cloud
+    // (older records stay readable by the newer code). Returns true when something was changed.
+    function normalizeLoadedData() {
+        let changed = false;
+        Object.keys(booksStock).forEach(k => { booksStock[k] = Math.max(0, parseInt(booksStock[k], 10) || 0); });
+        BOOK_STAGES.forEach(stage => {
+            if (booksStock[stage] == null) booksStock[stage] = 0;
+            levelsOf(stage).forEach(l => { if (booksStock[bookKey(stage, l)] == null) booksStock[bookKey(stage, l)] = 0; });
+        });
+
+        studentAttendanceList.forEach(s => {
+            if (!s.attendanceByWeek) {
+                s.attendanceByWeek = {};
+                if (s.attendance) s.attendanceByWeek[isoDate(currentWeekStart())] = s.attendance;
+                changed = true;
+            }
+            if ('attendance' in s) { delete s.attendance; changed = true; }
+        });
+
+        staffList.forEach(st => {
+            if (!st.weeks) {
+                st.weeks = {};
+                const hasOld = st.attendance && Object.values(st.attendance).some(Boolean);
+                if (hasOld) st.weeks[isoDate(currentWeekStart())] = { attendance: st.attendance, timings: st.timings || {} };
+                changed = true;
+            }
+            ['attendance', 'timings', 'monthlyDays'].forEach(k => { if (k in st) { delete st[k]; changed = true; } });
+        });
+
+        payments.forEach(p => {
+            const n = normalizePhone(p.phone);
+            if (n && n !== p.phone) { p.phone = n; changed = true; }
+        });
+        studentAttendanceList.forEach(st => {
+            const n = normalizePhone(st.mobile);
+            if (n && n !== st.mobile) { st.mobile = n; changed = true; }
+        });
+
+        try {
+            Object.entries({
+                [STORAGE_KEYS.payments]: payments,
+                [STORAGE_KEYS.staff]: staffList,
+                [STORAGE_KEYS.students]: studentAttendanceList,
+                [STORAGE_KEYS.books]: booksStock
+            }).forEach(([key, value]) => localStorage.setItem(key, JSON.stringify(value)));
+        } catch (_) { /* storage full */ }
+        return changed;
+    }
+
     // Reads JSON from localStorage. Unreadable data never crashes startup; the raw text is
     // copied to "<key>__corrupt_backup" first so a later save cannot destroy it.
     function loadStored(key, fallback) {
@@ -333,13 +407,56 @@ document.addEventListener('DOMContentLoaded', () => {
     let staffList = loadStored(STORAGE_KEYS.staff, []);
     let studentAttendanceList = loadStored(STORAGE_KEYS.students, []);
 
-    /* ---------- Books inventory (stages only, no groups) ---------- */
-    const BOOK_STAGES = ['Juniors', 'Kiddos', 'Beginners', 'Movers', 'Flyers', 'Supers'];
+    /* ---------- Rooms (stages) and their levels ---------- */
+    // Edit this list to rename / add / remove levels. Stages with no levels (Speaking, Drama...)
+    // open their attendance table directly.
+    const mkLevels = (stage, n) => Array.from({ length: n }, (_, i) => stage + "'" + (i + 1));
+    const STAGE_LEVELS = {
+        Juniors:   mkLevels('Juniors', 4),
+        Toddlers:  mkLevels('Toddlers', 4),
+        Kiddos:    mkLevels('Kiddos', 4),
+        Beginners: mkLevels('Beginners', 7),
+        Movers:    mkLevels('Movers', 8),
+        Flyers:    mkLevels('Flyers', 4),
+        Supers:    mkLevels('Supers', 4),
+        Adults:    ['Starters', 'Beginners', 'Elementary', 'Pre-Intermediate', 'Intermediate', 'Upper-Intermediate']
+    };
+    const BOOK_STAGES = ['Juniors', 'Toddlers', 'Kiddos', 'Beginners', 'Movers', 'Flyers', 'Supers', 'Adults'];
+    const ATT_STAGES = BOOK_STAGES.concat(['Speaking', 'Drama', 'Robotics', 'Programming']);
+    const levelsOf = stage => STAGE_LEVELS[stage] || [];
+    const stageHasLevels = stage => levelsOf(stage).length > 0;
+    const levelLabel = l => l || 'No level yet';
+    const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+
+    // Stock key of one level. A student with no level uses the plain stage key, which is
+    // exactly where the old per-stage counts were stored, so old data keeps working.
+    const bookKey = (stage, level) => level ? stage + '::' + level : stage;
+
     let booksStock = loadStored(STORAGE_KEYS.books, {});
-    BOOK_STAGES.forEach(stage => { booksStock[stage] = Math.max(0, parseInt(booksStock[stage], 10) || 0); });
+    Object.keys(booksStock).forEach(k => { booksStock[k] = Math.max(0, parseInt(booksStock[k], 10) || 0); });
+    BOOK_STAGES.forEach(stage => {
+        booksStock[stage] = booksStock[stage] || 0;
+        levelsOf(stage).forEach(l => { booksStock[bookKey(stage, l)] = booksStock[bookKey(stage, l)] || 0; });
+    });
 
     function saveBooksStock() {
         saveStored(STORAGE_KEYS.books, booksStock);
+    }
+
+    function roomCardHtml(attrs, icon, title, count, meta) {
+        return `<button type="button" class="room-card" ${attrs}>
+            <span class="room-icon"><i class="fa-solid ${icon}"></i></span>
+            <h3>${escapeHtml(title)}</h3>
+            <div class="room-count">${count}</div>
+            <div class="room-meta">${meta}</div>
+        </button>`;
+    }
+
+    function crumbHtml(rootAttr, rootLabel, middle, last) {
+        const sep = '<i class="fa-solid fa-chevron-right crumb-sep"></i>';
+        let out = `<button type="button" class="crumb" ${rootAttr}><i class="fa-solid fa-house"></i> ${rootLabel}</button>`;
+        middle.forEach(m => { out += sep + `<button type="button" class="crumb" ${m.attr}>${escapeHtml(m.label)}</button>`; });
+        return out + sep + `<strong>${escapeHtml(last)}</strong>`;
     }
 
     /* ---------- Weekly attendance helpers (week = Saturday to Thursday) ---------- */
@@ -394,6 +511,71 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('nextWeekBtn').addEventListener('click', () => { viewWeekStart = addDays(viewWeekStart, 7); renderStudentAttendance(); });
     document.getElementById('currentWeekBtn').addEventListener('click', () => { viewWeekStart = currentWeekStart(); renderStudentAttendance(); });
 
+    /* ---------- Total Collected (password protected) ---------- */
+    // Note: this only hides the number on screen. The password is stored in this file, so it is
+    // not real security against someone who can open the code.
+    const COLLECTED_PASSWORD = 'coursado2026';
+    const collectedLock = document.getElementById('collectedLock');
+    const collectedContent = document.getElementById('collectedContent');
+    const collectedPassword = document.getElementById('collectedPassword');
+    const collectedError = document.getElementById('collectedError');
+
+    function lockCollected() {
+        collectedLock.style.display = '';
+        collectedContent.style.display = 'none';
+        collectedPassword.value = '';
+        collectedError.style.display = 'none';
+    }
+
+    document.getElementById('collectedForm').addEventListener('submit', e => {
+        e.preventDefault();
+        if (collectedPassword.value === COLLECTED_PASSWORD) {
+            collectedLock.style.display = 'none';
+            collectedContent.style.display = '';
+            collectedPassword.value = '';
+            collectedError.style.display = 'none';
+        } else {
+            collectedError.style.display = 'block';
+            collectedPassword.value = '';
+            collectedPassword.focus();
+        }
+    });
+
+    document.getElementById('lockCollectedBtn').addEventListener('click', lockCollected);
+
+    // Every month that has payments, newest first, with how many payments and how much was collected
+    function renderCollectedMonths() {
+        const body = document.getElementById('collectedMonthsBody');
+        if (!body) return;
+
+        const byMonth = {};
+        const undated = { count: 0, sum: 0 };
+
+        payments.forEach(p => {
+            const bucket = p.date ? (byMonth[p.date.slice(0, 7)] = byMonth[p.date.slice(0, 7)] || { count: 0, sum: 0 }) : undated;
+            bucket.count += 1;
+            bucket.sum += p.amount;
+        });
+
+        const currentMonth = todayIso().slice(0, 7);
+        const rows = Object.keys(byMonth).sort().reverse().map(m => {
+            const [year, month] = m.split('-');
+            const name = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+            return `<tr>
+                <td><strong>${name}</strong>${m === currentMonth ? ' <span class="method-badge">This month</span>' : ''}</td>
+                <td>${byMonth[m].count}</td>
+                <td class="amount-paid">EGP ${byMonth[m].sum.toLocaleString()}</td>
+            </tr>`;
+        });
+
+        if (undated.count) {
+            rows.push(`<tr><td>No date</td><td>${undated.count}</td><td class="amount-paid">EGP ${undated.sum.toLocaleString()}</td></tr>`);
+        }
+
+        body.innerHTML = rows.join('') ||
+            '<tr><td colspan="3" style="text-align:center;">No payments recorded yet.</td></tr>';
+    }
+
     function switchView(targetViewId) {
         viewSections.forEach(section => {
             section.style.display = 'none';
@@ -416,8 +598,11 @@ document.addEventListener('DOMContentLoaded', () => {
             attendance: 'Staff Attendance Tracker',
             books: 'Books Inventory',
             'student-attendance': 'Student Attendance',
+            collected: 'Total Collected',
             reports: 'Financial Reports & Exports'
         };
+
+        if (targetViewId !== 'collected') lockCollected();
 
         pageTitle.textContent = titles[targetViewId] || 'Dashboard Overview';
 
@@ -446,12 +631,33 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Set when the payment form was opened from a student's Fees check
+    let pendingFeeStudentId = null;
+
+    function resetPaymentForm() {
+        paymentForm.reset();
+        paymentDateInput.value = todayIso();
+        otherCategoryWrapper.style.display = 'none';
+        otherCategoryText.removeAttribute('required');
+        pendingFeeStudentId = null;
+        paymentModalTitle.textContent = 'Add New Payment';
+    }
+
     const toggleModal = show => {
         paymentModal.style.display = show ? 'flex' : 'none';
+        if (!show) resetPaymentForm();
     };
 
-    openModalBtn.addEventListener('click', () => toggleModal(true));
-    quickAddPayment.addEventListener('click', () => toggleModal(true));
+    // suggestions for "Added By": everyone who already added a payment
+    function refreshAddedByList() {
+        const names = [...new Set(payments.map(p => (p.addedBy || '').trim()).filter(Boolean))].sort();
+        addedByList.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+    }
+
+    const openBlankPayment = () => { resetPaymentForm(); refreshAddedByList(); toggleModal(true); };
+
+    openModalBtn.addEventListener('click', openBlankPayment);
+    quickAddPayment.addEventListener('click', openBlankPayment);
     closeModal.addEventListener('click', () => toggleModal(false));
 
     openAddStaffModal.addEventListener('click', () => {
@@ -467,6 +673,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     openAddStudentAttendance.addEventListener('click', () => {
+        // opened from inside a room / level: start with that room and level selected
+        if (attStage) {
+            attendanceCategory.value = attStage;
+            fillAttendanceLevelOptions();
+            if (attLevel) attendanceLevel.value = attLevel;
+        }
         studentAttendanceModal.style.display = 'flex';
     });
 
@@ -732,6 +944,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>
                     <button
                         class="btn"
+                        title="Default arrival &amp; departure"
+                        onclick="openTimingModal(${staff.id})"
+                    >
+                        <i class="fa-solid fa-clock"></i>
+                    </button>
+                    <button
+                        class="btn"
                         onclick="deleteStaff(${staff.id})"
                     >
                         <i class="fa-solid fa-trash"></i>
@@ -770,14 +989,20 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
 
         const name = attendanceStudentName.value.trim();
-        const mobile = attendanceMobile.value.trim();
+        const mobile = normalizePhone(attendanceMobile.value) || attendanceMobile.value.trim();
         const category = attendanceCategory.value;
+        const level = attendanceLevel.value;
         const group = attendanceGroup.value.trim().toUpperCase();
         const courseTime = attendanceTime.value;
         const selectedDays = getSelectedDays();
 
         if (!name || !mobile || !category || !group || !courseTime) {
             alert('Please complete all student information.');
+            return;
+        }
+
+        if (stageHasLevels(category) && !level) {
+            alert('Please choose the level.');
             return;
         }
 
@@ -792,7 +1017,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const duplicate = studentAttendanceList.some(student =>
             student.name.toLowerCase() === name.toLowerCase() &&
-            student.mobile === mobile
+            phoneKey(student.mobile) === phoneKey(mobile)
         );
 
         if (duplicate) {
@@ -805,6 +1030,7 @@ document.addEventListener('DOMContentLoaded', () => {
             name,
             mobile,
             category,
+            level: stageHasLevels(category) ? level : '',
             group,
             courseTime,
             courseDays: selectedDays,
@@ -819,15 +1045,59 @@ document.addEventListener('DOMContentLoaded', () => {
         renderStudentAttendance();
 
         studentAttendanceForm.reset();
+        fillAttendanceLevelOptions();
 
         studentAttendanceModal.style.display = 'none';
     });
+
+    /* ---------- Student attendance: rooms -> levels -> table ---------- */
+    let attStage = null;   // null = list of rooms
+    let attLevel = null;   // null = list of levels; a string (may be '') = that level's table
+
+    const attBreadcrumb = document.getElementById('attBreadcrumb');
+    const attCards = document.getElementById('attCards');
+    const attToolbar = document.getElementById('attToolbar');
+    const attTableArea = document.getElementById('attTableArea');
+
+    attendanceCategory.innerHTML = '<option value="" disabled selected>Select category...</option>' +
+        ATT_STAGES.map(st => `<option value="${st}">${st}</option>`).join('');
+
+    function fillAttendanceLevelOptions() {
+        const lv = levelsOf(attendanceCategory.value);
+        attendanceLevelGroup.style.display = lv.length ? '' : 'none';
+        attendanceLevel.required = lv.length > 0;
+        attendanceLevel.innerHTML = '<option value="" disabled selected>Select level...</option>' +
+            lv.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+    }
+    attendanceCategory.addEventListener('change', fillAttendanceLevelOptions);
+
+    // the built-in rooms plus any other category already used by saved students
+    function attStages() {
+        const extra = [...new Set(studentAttendanceList.map(st => st.category).filter(c => c && !ATT_STAGES.includes(c)))];
+        return ATT_STAGES.concat(extra);
+    }
+
+    function attScopeStudents() {
+        return studentAttendanceList.filter(st =>
+            st.category === attStage && (attLevel === null || (st.level || '') === attLevel));
+    }
+
+    const attFiltersActive = () =>
+        attendanceSearch.value.trim() !== '' || attendanceGroupFilter.value !== 'all';
+
+    function attGo(stage, level) {
+        attStage = stage;
+        attLevel = level;
+        attendanceSearch.value = '';
+        attendanceGroupFilter.value = 'all';
+        renderStudentAttendance();
+    }
 
     function refreshGroupFilter() {
         const current = attendanceGroupFilter.value;
 
         const groups = [...new Set(
-            studentAttendanceList
+            (attStage ? attScopeStudents() : [])
                 .map(student => (student.group || '').toUpperCase())
                 .filter(Boolean)
         )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -845,61 +1115,101 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderStudentAttendance() {
-        studentAttendanceTableBody.innerHTML = '';
-
         renderWeekHeader();
+
+        if (attStage && !attStages().includes(attStage)) { attStage = null; attLevel = null; }
+
         refreshGroupFilter();
 
+        const hasLevels = !!attStage && stageHasLevels(attStage);
+        const filtersOn = attFiltersActive();
+        const showTable = !!attStage && (!hasLevels || attLevel !== null || filtersOn);
+        const showCards = !attStage || (hasLevels && attLevel === null && !filtersOn);
+
+        if (!attStage) {
+            attBreadcrumb.innerHTML = '';
+        } else if (attLevel === null) {
+            attBreadcrumb.innerHTML = crumbHtml('data-att-nav="root"', 'All rooms', [], attStage);
+        } else {
+            attBreadcrumb.innerHTML = crumbHtml('data-att-nav="root"', 'All rooms',
+                [{ attr: 'data-att-nav="stage"', label: attStage }], levelLabel(attLevel));
+        }
+
+        attToolbar.style.display = attStage ? '' : 'none';
+        attTableArea.style.display = showTable ? '' : 'none';
+        attCards.style.display = showCards ? '' : 'none';
+
+        if (showCards) {
+            if (!attStage) {
+                attCards.innerHTML = attStages().map(stage => {
+                    const n = studentAttendanceList.filter(st => st.category === stage).length;
+                    const lv = levelsOf(stage).length;
+                    return roomCardHtml('data-att-stage="' + escapeHtml(stage) + '"', 'fa-door-open', stage,
+                        plural(n, 'student'), lv ? plural(lv, 'level') : 'Open attendance');
+                }).join('');
+            } else {
+                const inStage = studentAttendanceList.filter(st => st.category === attStage);
+                const levels = levelsOf(attStage).slice();
+                if (inStage.some(st => !(st.level || ''))) levels.push('');
+                attCards.innerHTML = levels.map(l => {
+                    const list = inStage.filter(st => (st.level || '') === l);
+                    const groups = new Set(list.map(st => (st.group || '').toUpperCase()).filter(Boolean));
+                    return roomCardHtml('data-att-level="' + escapeHtml(l) + '"', 'fa-layer-group', levelLabel(l),
+                        plural(list.length, 'student'), plural(groups.size, 'group'));
+                }).join('');
+            }
+        }
+
+        studentAttendanceTableBody.innerHTML = '';
+        if (!showTable) return;
+
         const searchValue = attendanceSearch.value.toLowerCase().trim();
-        const categoryValue = attendanceCategoryFilter.value;
         const groupValue = attendanceGroupFilter.value;
 
-        let filtered = studentAttendanceList.filter(student => {
-
+        const filtered = attScopeStudents().filter(student => {
+            const grp = (student.group || '').toUpperCase();
             const matchesSearch =
+                !searchValue ||
                 student.name.toLowerCase().includes(searchValue) ||
-                (student.mobile || '').includes(searchValue);
-
-            const matchesCategory =
-                categoryValue === 'all' ||
-                student.category === categoryValue;
-
-            const matchesGroup =
-                groupValue === 'all' ||
-                (student.group || '').toUpperCase() === groupValue;
-
-            return matchesSearch &&
-                   matchesCategory &&
-                   matchesGroup;
-        });
+                (student.mobile || '').includes(searchValue) ||
+                grp.toLowerCase().includes(searchValue);
+            return matchesSearch && (groupValue === 'all' || grp === groupValue);
+        }).sort((a, b) =>
+            (a.group || '').localeCompare(b.group || '', undefined, { numeric: true }) ||
+            a.name.localeCompare(b.name));
 
         if (filtered.length === 0) {
             studentAttendanceTableBody.innerHTML = `
                 <tr>
-                    <td colspan="13" style="text-align:center;">
+                    <td colspan="16" style="text-align:center;">
                         No students found.
                     </td>
                 </tr>
             `;
-
             return;
         }
+
+        const dayColumns = ['sat', 'sun', 'mon', 'tue', 'wed', 'thu'];
 
         filtered.forEach(student => {
 
             const row = document.createElement('tr');
 
-            const dayColumns = [
-                'sat',
-                'sun',
-                'mon',
-                'tue',
-                'wed',
-                'thu'
-            ];
-
             const courseDays = student.courseDays || [];
             const studentAttendance = (student.attendanceByWeek || {})[weekKeyView()] || {};
+            const lv = levelsOf(student.category);
+
+            const levelCell = lv.length
+                ? `<select class="level-select" onchange="changeStudentLevel(${student.id}, this.value)">
+                        <option value="">No level yet</option>
+                        ${lv.map(l => `<option value="${escapeHtml(l)}" ${(student.level || '') === l ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+                   </select>`
+                : '&mdash;';
+
+            const flagBox = (flag, title) => `
+                <input type="checkbox" class="attendance-checkbox" title="${title}"
+                    ${student[flag] ? 'checked' : ''}
+                    onchange="toggleStudentFlag(${student.id}, '${flag}')">`;
 
             row.innerHTML = `
                 <td>
@@ -911,7 +1221,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </td>
 
                 <td>
-                    ${escapeHtml(student.category)}
+                    ${levelCell}
                 </td>
 
                 <td>
@@ -956,6 +1266,20 @@ document.addEventListener('DOMContentLoaded', () => {
                         : '&mdash;'}
                 </td>
 
+                <td>${flagBox('midExam', 'Mid exam done')}</td>
+
+                <td>${flagBox('finalExam', 'Final exam done')}</td>
+
+                <td>
+                    <input
+                        type="checkbox"
+                        class="attendance-checkbox"
+                        title="Fees paid - ticking opens the payment form"
+                        ${student.feesPaid ? 'checked' : ''}
+                        onchange="toggleStudentFees(${student.id})"
+                    >
+                </td>
+
                 <td>
                     <button
                         class="btn"
@@ -969,6 +1293,76 @@ document.addEventListener('DOMContentLoaded', () => {
             studentAttendanceTableBody.appendChild(row);
         });
     }
+
+    attCards.addEventListener('click', e => {
+        const card = e.target.closest('.room-card');
+        if (!card) return;
+        if (card.dataset.attStage !== undefined) attGo(card.dataset.attStage, null);
+        else if (card.dataset.attLevel !== undefined) attGo(attStage, card.dataset.attLevel);
+    });
+
+    attBreadcrumb.addEventListener('click', e => {
+        const btn = e.target.closest('[data-att-nav]');
+        if (!btn) return;
+        if (btn.dataset.attNav === 'root') attGo(null, null);
+        else attGo(attStage, null);
+    });
+
+    window.changeStudentLevel = function(studentId, level) {
+        const student = studentAttendanceList.find(st => st.id === studentId);
+        if (!student) return;
+        student.level = level;
+        saveStored(STORAGE_KEYS.students, studentAttendanceList);
+        renderStudentAttendance();
+    };
+
+    window.toggleStudentFlag = function(studentId, flag) {
+        if (flag !== 'midExam' && flag !== 'finalExam') return;
+        const student = studentAttendanceList.find(st => st.id === studentId);
+        if (!student) return;
+        student[flag] = !student[flag];
+        saveStored(STORAGE_KEYS.students, studentAttendanceList);
+        renderStudentAttendance();
+    };
+
+    // Ticking Fees opens the payment form with the student's info filled in. The tick is
+    // saved only when the payment is saved. Unticking never deletes the payment record.
+    window.toggleStudentFees = function(studentId) {
+        const student = studentAttendanceList.find(st => st.id === studentId);
+        if (!student) return;
+
+        if (student.feesPaid) {
+            if (confirm('Remove the fees tick for ' + student.name + '?\n\nThe payment stays in the Payments tab.')) {
+                student.feesPaid = false;
+                delete student.feePaymentId;
+                saveStored(STORAGE_KEYS.students, studentAttendanceList);
+            }
+            renderStudentAttendance();
+            return;
+        }
+
+        resetPaymentForm();
+        pendingFeeStudentId = student.id;
+        paymentModalTitle.textContent = 'Fees Payment - ' + student.name;
+        studentNameInput.value = student.name;
+        studentPhoneInput.value = student.mobile || '';
+        refreshAddedByList();
+
+        if ([...categorySelect.options].some(o => o.value === student.category)) {
+            categorySelect.value = student.category;
+        } else {
+            categorySelect.value = 'Other';
+            otherCategoryWrapper.style.display = 'flex';
+            otherCategoryText.setAttribute('required', 'true');
+            otherCategoryText.value = student.category;
+        }
+
+        paymentNoteInput.value = ['Fees', student.level, student.group ? 'Group ' + student.group.toUpperCase() : '',
+            student.mobile ? 'Mobile ' + student.mobile : ''].filter(Boolean).join(' - ');
+
+        toggleModal(true);
+        renderStudentAttendance(); // the browser already ticked the box; show the real state
+    };
 
     window.toggleStudentAttendance = function(studentId, day) {
 
@@ -996,19 +1390,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const student = studentAttendanceList.find(s => s.id === studentId);
         if (!student || !BOOK_STAGES.includes(student.category)) return;
 
-        const stage = student.category;
-
         if (!student.bookTaken) {
-            if ((booksStock[stage] || 0) < 1) {
-                alert('No ' + stage + ' books left in stock. Add books in the Books tab first.');
+            const key = bookKey(student.category, student.level || '');
+            if ((booksStock[key] || 0) < 1) {
+                const where = student.level ? student.level : student.category;
+                alert('No ' + where + ' books left in stock. Add books in the Books tab first.');
                 renderStudentAttendance();
                 return;
             }
-            booksStock[stage] -= 1;
+            booksStock[key] -= 1;
             student.bookTaken = true;
+            student.bookKey = key;
         } else {
-            booksStock[stage] += 1;
+            // give the book back to the stock it came from, even if the student changed level since
+            const key = student.bookKey || bookKey(student.category, student.level || '');
+            booksStock[key] = (booksStock[key] || 0) + 1;
             student.bookTaken = false;
+            delete student.bookKey;
         }
 
         saveStored(STORAGE_KEYS.students, studentAttendanceList);
@@ -1018,32 +1416,69 @@ document.addEventListener('DOMContentLoaded', () => {
         renderBooks();
     };
 
+    /* ---------- Books: rooms -> levels ---------- */
+    let booksStage = null;
+
+    function stageBookTotal(stage) {
+        return levelsOf(stage).reduce((sum, l) => sum + (booksStock[bookKey(stage, l)] || 0), booksStock[stage] || 0);
+    }
+
     function renderBooks() {
         const grid = document.getElementById('booksGrid');
+        const crumb = document.getElementById('booksBreadcrumb');
         if (!grid) return;
 
-        grid.innerHTML = BOOK_STAGES.map(stage => `
+        if (!booksStage) {
+            crumb.innerHTML = '';
+            grid.innerHTML = BOOK_STAGES.map(stage =>
+                roomCardHtml('data-book-stage="' + escapeHtml(stage) + '"', 'fa-door-open', stage,
+                    stageBookTotal(stage), 'books &middot; ' + plural(levelsOf(stage).length, 'level'))
+            ).join('');
+            return;
+        }
+
+        crumb.innerHTML = crumbHtml('data-book-nav="root"', 'All rooms', [], booksStage);
+
+        const items = levelsOf(booksStage).map(l => ({ label: l, key: bookKey(booksStage, l) }));
+        if ((booksStock[booksStage] || 0) > 0) {
+            items.push({ label: 'No level (old stock)', key: booksStage });
+        }
+
+        grid.innerHTML = items.map(it => `
             <div class="book-card">
                 <div class="book-card-title">
-                    <i class="fa-solid fa-book"></i> ${stage}
+                    <i class="fa-solid fa-book"></i> ${escapeHtml(it.label)}
                 </div>
-                <div class="book-count ${booksStock[stage] === 0 ? 'empty' : ''}">${booksStock[stage]}</div>
+                <div class="book-count ${booksStock[it.key] === 0 ? 'empty' : ''}">${booksStock[it.key] || 0}</div>
                 <div class="book-count-label">books available</div>
-                <input type="number" min="0" step="1" id="bookInput_${stage}" placeholder="Number of books">
+                <input type="number" min="0" step="1" placeholder="Number of books">
                 <div class="book-card-actions">
-                    <button type="button" class="btn primary-btn" data-book-action="add" data-stage="${stage}">Add</button>
-                    <button type="button" class="btn" data-book-action="set" data-stage="${stage}">Set total</button>
+                    <button type="button" class="btn primary-btn" data-book-action="add" data-key="${escapeHtml(it.key)}">Add</button>
+                    <button type="button" class="btn" data-book-action="set" data-key="${escapeHtml(it.key)}">Set total</button>
                 </div>
             </div>
         `).join('');
     }
 
+    document.getElementById('booksBreadcrumb').addEventListener('click', e => {
+        if (!e.target.closest('[data-book-nav="root"]')) return;
+        booksStage = null;
+        renderBooks();
+    });
+
     document.getElementById('booksGrid').addEventListener('click', e => {
+        const room = e.target.closest('.room-card');
+        if (room && room.dataset.bookStage !== undefined) {
+            booksStage = room.dataset.bookStage;
+            renderBooks();
+            return;
+        }
+
         const btn = e.target.closest('button[data-book-action]');
         if (!btn) return;
 
-        const stage = btn.dataset.stage;
-        const input = document.getElementById('bookInput_' + stage);
+        const key = btn.dataset.key;
+        const input = btn.closest('.book-card').querySelector('input');
         const amount = parseInt(input.value, 10);
         const action = btn.dataset.bookAction;
 
@@ -1052,7 +1487,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        booksStock[stage] = action === 'add' ? booksStock[stage] + amount : amount;
+        booksStock[key] = action === 'add' ? (booksStock[key] || 0) + amount : amount;
         saveBooksStock();
         renderBooks();
     });
@@ -1064,6 +1499,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 'Are you sure you want to remove this student from attendance?'
             )
         ) {
+            const removed = studentAttendanceList.find(student => student.id === id);
+
+            if (removed && removed.bookTaken) {
+                const key = removed.bookKey || bookKey(removed.category, removed.level || '');
+                booksStock[key] = (booksStock[key] || 0) + 1;
+                saveBooksStock();
+            }
+
             studentAttendanceList =
                 studentAttendanceList.filter(
                     student => student.id !== id
@@ -1072,6 +1515,7 @@ document.addEventListener('DOMContentLoaded', () => {
             saveStored(STORAGE_KEYS.students, studentAttendanceList);
 
             renderStudentAttendance();
+            renderBooks();
         }
     };
 
@@ -1080,17 +1524,11 @@ document.addEventListener('DOMContentLoaded', () => {
         renderStudentAttendance
     );
 
-    attendanceCategoryFilter.addEventListener(
-        'change',
-        renderStudentAttendance
-    );
-
     attendanceGroupFilter.addEventListener(
         'change',
         renderStudentAttendance
     );
 
-    // Force the Group input to uppercase while typing
     attendanceGroup.addEventListener('input', () => {
         const start = attendanceGroup.selectionStart;
         const end = attendanceGroup.selectionEnd;
@@ -1124,6 +1562,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         e.preventDefault();
 
+        const feeStudentId = pendingFeeStudentId;
+
         let categoryValue = categorySelect.value;
 
         if (categoryValue === 'Other') {
@@ -1134,6 +1574,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const newPayment = {
             id: Date.now(),
             name: studentNameInput.value.trim(),
+            phone: normalizePhone(studentPhoneInput.value) || studentPhoneInput.value.trim(),
+            addedBy: addedByInput.value.trim(),
             category: categoryValue,
             amount: parseFloat(amountPaidInput.value),
             balanceDue: balanceDueInput.value
@@ -1145,6 +1587,16 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         payments.unshift(newPayment);
+
+        // payment opened from a student's Fees check: tick it now that the payment is saved
+        if (feeStudentId !== null) {
+            const feeStudent = studentAttendanceList.find(st => st.id === feeStudentId);
+            if (feeStudent) {
+                feeStudent.feesPaid = true;
+                feeStudent.feePaymentId = newPayment.id;
+                saveStored(STORAGE_KEYS.students, studentAttendanceList);
+            }
+        }
 
         lastAddedPayment = newPayment;
 
@@ -1168,6 +1620,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.getElementById('recStudent').textContent =
             p.name;
+
+        document.getElementById('recPhone').textContent =
+            p.phone || '-';
+
+        document.getElementById('recAddedBy').textContent =
+            p.addedBy || '-';
 
         document.getElementById('recCategory').textContent =
             p.category;
@@ -1195,6 +1653,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const receiptCard =
             document.getElementById('receiptCard');
 
+        if (typeof html2canvas === 'undefined') {
+            alert('Could not create the image (the html2canvas library did not load - check your internet connection).');
+            return;
+        }
+
         html2canvas(receiptCard).then(canvas => {
 
             const link =
@@ -1207,6 +1670,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 canvas.toDataURL('image/png');
 
             link.click();
+        }).catch(err => {
+            console.error('Receipt image failed:', err);
+            alert('Could not create the receipt image. Please try again.');
         });
     });
 
@@ -1220,7 +1686,22 @@ document.addEventListener('DOMContentLoaded', () => {
             payments =
                 payments.filter(p => p.id !== id);
 
+            let feesChanged = false;
+            studentAttendanceList.forEach(st => {
+                if (st.feePaymentId === id) {
+                    st.feesPaid = false;
+                    delete st.feePaymentId;
+                    feesChanged = true;
+                }
+            });
+            if (feesChanged) saveStored(STORAGE_KEYS.students, studentAttendanceList);
+
             saveAndRender();
+
+            // keep the history window in sync (closes by itself when the student has no payments left)
+            if (openHistoryKey !== null && studentHistoryModal.style.display === 'flex') {
+                openStudentHistory(openHistoryKey);
+            }
         }
     };
 
@@ -1247,27 +1728,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
         renderReports();
 
+        renderCollectedMonths();
+
         populateExportDropdowns();
     }
 
-    function paymentRowHtml(p) {
+    // Groups payments into one entry per student (same name + same phone), newest student first
+    function groupPayments(list) {
+        const map = new Map();
+        [...list].sort(byDateDesc).forEach(p => {
+            const key = studentKey(p);
+            if (!map.has(key)) map.set(key, { key, name: p.name, phone: p.phone || '', latest: p, payments: [], total: 0 });
+            const g = map.get(key);
+            g.payments.push(p);
+            g.total += p.amount;
+        });
+        return [...map.values()];
+    }
+
+    // One table row per student: shows the latest payment and the total paid.
+    // Every payment of that student is inside the history window (click the name).
+    function studentRowHtml(g) {
+        const p = g.latest;
         const balance = p.balanceDue || 0;
+        const n = g.payments.length;
 
         return `
             <td>
-                <strong>${escapeHtml(p.name)}</strong>
+                <strong class="student-link" data-student-key="${escapeHtml(g.key)}" title="Click to see all payments of this student">${escapeHtml(g.name)}</strong>
             </td>
-            <td>${escapeHtml(p.date)}</td>
-            <td class="amount-paid">EGP ${p.amount.toLocaleString()}</td>
+            <td>${escapeHtml(g.phone || '-')}</td>
+            <td>${escapeHtml(p.date || '-')}</td>
+            <td class="amount-paid">EGP ${g.total.toLocaleString()}<br><small style="color:#64748b;font-weight:400;">${n} payment${n === 1 ? '' : 's'}</small></td>
             <td class="${balance > 0 ? 'balance-due' : 'balance-clear'}">EGP ${balance.toLocaleString()}</td>
             <td>${escapeHtml(p.category)}</td>
             <td>
-                <span class="method-badge">${escapeHtml(p.method)}</span>
+                <span class="method-badge">${escapeHtml(p.method || '-')}</span>
             </td>
+            <td>${escapeHtml(p.addedBy || '-')}</td>
             <td>${escapeHtml(p.note || '-')}</td>
             <td>
-                <button class="btn" onclick="deletePayment(${p.id})">
-                    <i class="fa-solid fa-trash"></i>
+                <button class="btn view-history-btn" data-student-key="${escapeHtml(g.key)}" title="See all payments of this student">
+                    <i class="fa-solid fa-eye"></i>
                 </button>
             </td>
         `;
@@ -1281,7 +1783,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             paymentsTableBody.innerHTML = `
                 <tr>
-                    <td colspan="8" style="text-align:center;">
+                    <td colspan="10" style="text-align:center;">
                         No payment records found.
                     </td>
                 </tr>
@@ -1310,7 +1812,7 @@ document.addEventListener('DOMContentLoaded', () => {
             totalSum += p.amount;
 
             uniqueStudents.add(
-                p.name.toLowerCase().trim()
+                studentKey(p)
             );
 
             if (
@@ -1334,14 +1836,14 @@ document.addEventListener('DOMContentLoaded', () => {
             `EGP ${currentMonthSum.toLocaleString()}`;
 
         const recentSlice =
-            payments.slice(0, 5);
+            groupPayments(payments).slice(0, 5);
 
-        recentSlice.forEach(p => {
+        recentSlice.forEach(g => {
 
             const row =
                 document.createElement('tr');
 
-            row.innerHTML = paymentRowHtml(p);
+            row.innerHTML = studentRowHtml(g);
 
             paymentsTableBody.appendChild(row);
         });
@@ -1400,16 +1902,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 );
         }
 
-        // typing a number (500) or a comparison (>0, <=200) searches the balance due
-        const balanceQuery = parseBalanceQuery(searchVal);
+        // a long run of digits (6+) is a phone search; a short number (500) or a comparison
+        // (>0, <=200) searches the balance due
+        const phoneQuery = /^[\d\s+\-]{6,}$/.test(searchVal) ? phoneKey(searchVal) : '';
+        const balanceQuery = phoneQuery ? null : parseBalanceQuery(searchVal);
 
-        if (searchVal !== '' && !balanceQuery) {
+        if (phoneQuery) {
+            filteredPayments =
+                filteredPayments.filter(
+                    p => phoneKey(p.phone).includes(phoneQuery)
+                );
+        } else if (searchVal !== '' && !balanceQuery) {
             filteredPayments =
                 filteredPayments.filter(
                     p =>
-                        p.name
-                            .toLowerCase()
-                            .includes(searchVal)
+                        p.name.toLowerCase().includes(searchVal) ||
+                        String(p.phone || '').toLowerCase().includes(searchVal)
                 );
         }
 
@@ -1419,12 +1927,14 @@ document.addEventListener('DOMContentLoaded', () => {
         [...filteredPayments].sort(byDateAsc).forEach(p => {
 
             const key =
-                p.name.toLowerCase().trim();
+                studentKey(p);
 
             if (!studentMap[key]) {
 
                 studentMap[key] = {
+                    key,
                     name: p.name,
+                    phone: p.phone || '',
                     count: 0,
                     total: 0,
                     latestBalance: p.balanceDue || 0,
@@ -1458,7 +1968,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             studentsTableBody.innerHTML = `
                 <tr>
-                    <td colspan="5" style="text-align:center;">
+                    <td colspan="6" style="text-align:center;">
                         No matching students found.
                     </td>
                 </tr>
@@ -1474,9 +1984,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
             row.innerHTML = `
                 <td>
-                    <strong>
+                    <strong class="student-link" data-student-key="${escapeHtml(s.key)}" title="Click to see all payments of this student">
                         ${escapeHtml(s.name)}
                     </strong>
+                </td>
+
+                <td>
+                    ${escapeHtml(s.phone || '-')}
                 </td>
 
                 <td>
@@ -1535,7 +2049,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             allPaymentsTableBody.innerHTML = `
                 <tr>
-                    <td colspan="8" style="text-align:center;">
+                    <td colspan="10" style="text-align:center;">
                         No payment records found.
                     </td>
                 </tr>
@@ -1544,12 +2058,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        data.forEach(p => {
+        data.forEach(g => {
 
             const row =
                 document.createElement('tr');
 
-            row.innerHTML = paymentRowHtml(p);
+            row.innerHTML = studentRowHtml(g);
 
             allPaymentsTableBody.appendChild(row);
         });
@@ -1590,9 +2104,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const balanceMode = paymentBalanceFilter ? paymentBalanceFilter.value : 'all';
         const balanceQuery = parseBalanceQuery(query);
 
-        const filtered = payments.filter(p => {
+        const filtered = groupPayments(payments).filter(g => {
 
-            const bal = p.balanceDue || 0;
+            // balance filters look at the student's latest balance
+            const bal = g.latest.balanceDue || 0;
 
             if (balanceMode === 'due' && !(bal > 0)) return false;
             if (balanceMode === 'clear' && bal > 0) return false;
@@ -1604,8 +2119,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (balanceQuery.isOperator) return false;
             }
 
-            return [p.name, p.category, p.note, p.date].some(
-                f => String(f || '').toLowerCase().includes(query)
+            // text search looks inside every payment of the student
+            return g.payments.some(p =>
+                [p.name, p.phone, p.addedBy, p.category, p.note, p.date].some(
+                    f => String(f || '').toLowerCase().includes(query)
+                )
             );
         });
 
@@ -1632,7 +2150,7 @@ document.addEventListener('DOMContentLoaded', () => {
             totalRev += p.amount;
 
             uniqueStudents.add(
-                p.name.toLowerCase().trim()
+                studentKey(p)
             );
 
             categoryMap[p.category] =
@@ -1858,8 +2376,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // treat it as text, not a formula (CSV injection).
     function csvCell(value) {
         let text = String(value == null ? '' : value);
-        if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+        // plain numbers / phone numbers are safe; keep them as they are
+        if (!/^[+\-]?[\d\s]+$/.test(text) && /^[=+\-@\t\r]/.test(text)) text = "'" + text;
         return '"' + text.replace(/"/g, '""') + '"';
+    }
+
+    // Phone as ="010..." so Excel keeps the leading zero (digits only, so it is not an injection risk)
+    function csvPhone(value) {
+        const text = String(value == null ? '' : value).trim();
+        return /^\+?\d+$/.test(text) ? '="' + text + '"' : csvCell(text);
     }
 
     function downloadCSV(dataArray, filename) {
@@ -1869,15 +2394,17 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const lines = ['Student Name,Category,Amount (EGP),Balance Due (EGP),Payment Method,Note,Date'];
+        const lines = ['Student Name,Phone,Category,Amount (EGP),Balance Due (EGP),Payment Method,Added By,Note,Date'];
 
         dataArray.forEach(p => {
             lines.push([
                 csvCell(p.name),
+                csvPhone(p.phone),
                 csvCell(p.category),
                 p.amount,
                 p.balanceDue || 0,
                 csvCell(p.method),
+                csvCell(p.addedBy),
                 csvCell(p.note),
                 csvCell(p.date)
             ].join(','));
@@ -2108,6 +2635,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return 'Beginners';
         }
 
+        if (fname.startsWith('t.')) {
+            return 'Toddlers';
+        }
+
         if (fname.startsWith('s.')) {
             return 'Supers';
         }
@@ -2125,14 +2656,30 @@ document.addEventListener('DOMContentLoaded', () => {
     let importParsed = { students: [], days: [], dates: 0, cancelled: 0 };
     let importFileName = '';
 
-    importCategory.innerHTML = [...attendanceCategoryFilter.options]
-        .map(o => o.value).filter(v => v !== 'all')
+    const importLevel = document.getElementById('importLevel');
+
+    importCategory.innerHTML = ATT_STAGES
         .concat('Other')
         .map(v => `<option value="${v}">${v}</option>`).join('');
 
-    const findAttStudent = s => studentAttendanceList.find(x =>
-        x.name.trim().toLowerCase() === s.name.toLowerCase() &&
-        (!x.mobile || !s.mobile || x.mobile === s.mobile));
+    function fillImportLevels() {
+        const lv = levelsOf(importCategory.value);
+        importLevel.style.display = lv.length ? '' : 'none';
+        importLevel.innerHTML = '<option value="">No level yet</option>' +
+            lv.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+    }
+    importCategory.addEventListener('change', fillImportLevels);
+    fillImportLevels();
+
+    // Same name + same phone = same student. If one side has no phone, only match when that
+    // name is unique, so two different students with the same name are never merged.
+    const findAttStudent = s => {
+        const sameName = studentAttendanceList.filter(x =>
+            x.name.trim().toLowerCase() === s.name.trim().toLowerCase());
+        const exact = sameName.find(x => x.mobile && s.mobile && phoneKey(x.mobile) === phoneKey(s.mobile));
+        if (exact) return exact;
+        return sameName.length === 1 && (!sameName[0].mobile || !s.mobile) ? sameName[0] : undefined;
+    };
 
     function serialToDate(n) {
         const p = XLSX.SSF.parse_date_code(n);
@@ -2513,6 +3060,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let cat = getCategoryFromFileTitle(importFileName.replace(/^([a-z])[\s_]/i, '$1.'));
             if (cat === 'Other') cat = getCategoryFromFileTitle(importParsed.title || '');
             importCategory.value = cat;
+            fillImportLevels();
             const g = importFileName.match(/^([a-z])[\s._-]*(\d+)[\s._-]*([a-z])?/i);
             importGroup.value = g ? (g[1] + '.' + g[2] + (g[3] || '')).toUpperCase() : '';
         }
@@ -2595,6 +3143,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const doFees = mode !== 'attendance';
         const doAtt = mode !== 'fees';
         const category = importCategory.value;
+        const level = stageHasLevels(category) ? importLevel.value : '';
         const group = importGroup.value.trim().toUpperCase();
         const courseTime = importTime.value;
         const days = [...document.querySelectorAll('input[name="importDay"]')]
@@ -2629,6 +3178,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 fresh.push({
                     id: uid++,
                     name: s.name,
+                    phone: s.mobile || '',
+                    addedBy: '',
                     category,
                     amount: s.fee,
                     balanceDue: s.balance,
@@ -2649,7 +3200,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     nUpd++;
                     if (!st.mobile && s.mobile) st.mobile = s.mobile;
                 } else {
-                    st = { id: uid++, name: s.name, mobile: s.mobile, category, group, courseTime, courseDays: days, attendanceByWeek: {} };
+                    st = { id: uid++, name: s.name, mobile: s.mobile, category, level, group, courseTime, courseDays: days, attendanceByWeek: {} };
                     studentAttendanceList.push(st);
                     nNew++;
                 }
@@ -2673,7 +3224,65 @@ document.addEventListener('DOMContentLoaded', () => {
             `<span><i class="fa-solid fa-circle-check"></i> Imported ${parts.join(' and ')}.</span>`;
     });
 
-    const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    /* ---------- Student payment history ---------- */
+    let openHistoryKey = null;
+
+    function openStudentHistory(key) {
+        const list = payments.filter(p => studentKey(p) === key).sort(byDateDesc);
+        if (list.length === 0) {
+            openHistoryKey = null;
+            studentHistoryModal.style.display = 'none';
+            return;
+        }
+        openHistoryKey = key;
+
+        const first = list[0];
+        const total = list.reduce((sum, p) => sum + p.amount, 0);
+        const latestBalance = list[0].balanceDue || 0;
+
+        historyTitle.textContent = first.name + ' - Payment History';
+
+        historySummary.innerHTML = `
+            <div><span>Phone:</span> <strong>${escapeHtml(first.phone || '-')}</strong></div>
+            <div><span>Payments made:</span> <strong>${list.length}</strong></div>
+            <div><span>Total paid:</span> <strong class="amount-paid">EGP ${total.toLocaleString()}</strong></div>
+            <div><span>Latest balance due:</span> <strong class="${latestBalance > 0 ? 'balance-due' : 'balance-clear'}">EGP ${latestBalance.toLocaleString()}</strong></div>
+        `;
+
+        historyTableBody.innerHTML = list.map(p => {
+            const balance = p.balanceDue || 0;
+            return `<tr>
+                <td>${escapeHtml(p.date || '-')}</td>
+                <td class="amount-paid">EGP ${p.amount.toLocaleString()}</td>
+                <td class="${balance > 0 ? 'balance-due' : 'balance-clear'}">EGP ${balance.toLocaleString()}</td>
+                <td>${escapeHtml(p.category)}</td>
+                <td><span class="method-badge">${escapeHtml(p.method || '-')}</span></td>
+                <td>${escapeHtml(p.addedBy || '-')}</td>
+                <td>${escapeHtml(p.note || '-')}</td>
+                <td>
+                    <button class="btn" title="Delete this payment" onclick="deletePayment(${p.id})">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        studentHistoryModal.style.display = 'flex';
+    }
+
+    document.addEventListener('click', e => {
+        const link = e.target.closest('.student-link, .view-history-btn');
+        if (link) openStudentHistory(link.dataset.studentKey);
+    });
+
+    document.getElementById('closeHistoryModal').addEventListener('click', () => {
+        studentHistoryModal.style.display = 'none';
+        openHistoryKey = null;
+    });
+
+    window.addEventListener('click', e => {
+        if (e.target === studentHistoryModal) studentHistoryModal.style.display = 'none';
+    });
 
     function escapeHtml(str) {
         return String(str).replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);
@@ -2722,7 +3331,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('clearBooksBtn').addEventListener('click', () => {
         if (!confirm('Reset the book count of every stage to 0?' + BACKUP_HINT)) return;
-        BOOK_STAGES.forEach(stage => { booksStock[stage] = 0; });
+        Object.keys(booksStock).forEach(k => { booksStock[k] = 0; });
         saveBooksStock();
         renderBooks();
     });
@@ -2746,7 +3355,7 @@ document.addEventListener('DOMContentLoaded', () => {
             isNumber(s.id) && isString(s.name) && isOptional(s.weeks, isPlainObject)],
         ['students', 'Student attendance', s =>
             isNumber(s.id) && isString(s.name) && isString(s.category) &&
-            isOptional(s.mobile, isString) && isOptional(s.group, isString) &&
+            isOptional(s.mobile, isString) && isOptional(s.group, isString) && isOptional(s.level, isString) &&
             isOptional(s.courseTime, isString) && isOptional(s.attendanceByWeek, isPlainObject) &&
             Array.isArray(s.courseDays) && s.courseDays.every(d => DAY_KEYS.includes(d))]
     ];
@@ -2777,7 +3386,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const backupStatus = document.getElementById('backupStatus');
     const restoreFileInput = document.getElementById('restoreFileInput');
 
-    document.getElementById('backupDataBtn').addEventListener('click', () => {
+    function downloadBackup(prefix) {
         const backup = { app: 'coursado', version: 1, savedAt: new Date().toISOString(), data: {} };
         BACKUP_KEYS.forEach(key => {
             try { backup.data[key] = JSON.parse(localStorage.getItem(key)); }
@@ -2787,10 +3396,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = 'coursado-backup-' + isoDate(new Date()) + '.json';
+        link.download = prefix + isoDate(new Date()) + '.json';
         link.click();
         setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }
 
+    document.getElementById('backupDataBtn').addEventListener('click', () => {
+        downloadBackup('coursado-backup-');
         backupStatus.textContent = 'Backup downloaded on ' + new Date().toLocaleString() + '.';
     });
 
@@ -2813,6 +3425,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     restoreFileInput.value = '';
                     return;
                 }
+                downloadBackup('coursado-before-restore-'); // safety copy of the current data
                 BACKUP_KEYS.forEach(key => {
                     const value = backup.data[key];
                     if (value === null || typeof value === 'undefined') localStorage.removeItem(key);
@@ -2835,6 +3448,21 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         reader.readAsText(file);
     });
+
+    // One-time clean-up: bring phone numbers saved earlier into the same format
+    (function normalizeSavedPhones() {
+        let payChanged = false, stuChanged = false;
+        payments.forEach(p => {
+            const n = normalizePhone(p.phone);
+            if (n && n !== p.phone) { p.phone = n; payChanged = true; }
+        });
+        studentAttendanceList.forEach(st => {
+            const n = normalizePhone(st.mobile);
+            if (n && n !== st.mobile) { st.mobile = n; stuChanged = true; }
+        });
+        if (payChanged) saveStored(STORAGE_KEYS.payments, payments);
+        if (stuChanged) saveStored(STORAGE_KEYS.students, studentAttendanceList);
+    })();
 
     async function initializeAuth() {
         if (!supabaseClient) {
